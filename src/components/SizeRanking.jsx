@@ -1,11 +1,11 @@
 /**
  * @file SizeRanking.jsx
- * @description Ranking table: every size/style row with progress bar + all balances.
+ * @description Ranking table: every size/style row grouped with subtotal + all balances.
  *              Sortable, scrollable, shows full detail (no truncation).
  */
 
-import { useState, useMemo } from 'react'
-import { ArrowUpDown } from 'lucide-react'
+import { useState, useMemo, Fragment } from 'react'
+import { ArrowUpDown, ChevronRight, ChevronDown } from 'lucide-react'
 import { fmt } from '../lib/calc.js'
 
 const COLS = [
@@ -31,6 +31,7 @@ const COLS = [
 export default function SizeRanking({ sizes, selectedFiles, selectedColors, selectedSizes }) {
   const [sortKey, setSortKey] = useState('balPack')
   const [sortDir, setSortDir] = useState('asc') // asc = worst first
+  const [expanded, setExpanded] = useState(() => new Set())
 
   const filtered = useMemo(() => {
     return sizes.filter((s) => {
@@ -40,16 +41,6 @@ export default function SizeRanking({ sizes, selectedFiles, selectedColors, sele
       return true
     })
   }, [sizes, selectedFiles, selectedColors, selectedSizes])
-
-  const sorted = useMemo(() => {
-    const arr = [...filtered]
-    arr.sort((a, b) => {
-      const va = a[sortKey], vb = b[sortKey]
-      if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
-      return sortDir === 'asc' ? va - vb : vb - va
-    })
-    return arr
-  }, [filtered, sortKey, sortDir])
 
   const numericCols = useMemo(() => COLS.filter((c) => !['file', 'color', 'style', 'size'].includes(c.key)), [])
 
@@ -62,16 +53,99 @@ export default function SizeRanking({ sizes, selectedFiles, selectedColors, sele
     return t
   }, [filtered, numericCols])
 
+  const sortRows = (arr) => {
+    const out = [...arr]
+    out.sort((a, b) => {
+      const va = a[sortKey], vb = b[sortKey]
+      if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
+      return sortDir === 'asc' ? va - vb : vb - va
+    })
+    return out
+  }
+
+  const groups = useMemo(() => {
+    const map = new Map()
+    filtered.forEach((s) => {
+      const key = `${s.file}||${s.color}||${s.style}`
+      if (!map.has(key)) map.set(key, { key, file: s.file, color: s.color, style: s.style, rows: [] })
+      map.get(key).rows.push(s)
+    })
+    const gArr = [...map.values()].map((g) => {
+      const subtotal = { file: g.file, color: g.color, style: g.style, size: `TOTAL (${g.rows.length})` }
+      numericCols.forEach((c) => {
+        subtotal[c.key] = g.rows.reduce((a, r) => a + (r[c.key] ?? 0), 0)
+      })
+      return { ...g, subtotal, rows: sortRows(g.rows) }
+    })
+    gArr.sort((a, b) => {
+      const stringField = ['file', 'color', 'style'].includes(sortKey)
+      const va = stringField ? a[sortKey] : a.subtotal[sortKey]
+      const vb = stringField ? b[sortKey] : b.subtotal[sortKey]
+      if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
+      return sortDir === 'asc' ? va - vb : vb - va
+    })
+    return gArr
+  }, [filtered, sortKey, sortDir, numericCols])
+
   const toggleSort = (k) => {
     if (sortKey === k) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     else { setSortKey(k); setSortDir('asc') }
   }
 
+  const toggleGroup = (key) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+  const expandAll = () => setExpanded(new Set(groups.map((g) => g.key)))
+  const collapseAll = () => setExpanded(new Set())
+
+  const renderCells = (row, indent = false) => {
+    return COLS.map((c) => {
+      const v = row[c.key]
+      const isBal = c.key.startsWith('bal')
+      const neg = isBal && typeof v === 'number' && v < 0
+      if (c.key === 'file') {
+        return (
+          <td key={c.key} className={`px-2 py-1.5 tabular whitespace-nowrap ${indent ? 'pl-6 text-slate-500' : ''}`}>
+            {v}
+          </td>
+        )
+      }
+      return (
+        <td key={c.key} className={`px-2 py-1.5 tabular whitespace-nowrap ${neg ? 'text-rose-600 font-medium' : ''}`}>
+          {typeof v === 'number' ? fmt(v) : v}
+        </td>
+      )
+    })
+  }
+
+  const renderProgress = (row) => {
+    const pct = row.order ? Math.min(100, (row.pack / row.order) * 100) : 0
+    return (
+      <td className="px-2 py-1.5 w-40">
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-2 rounded-full bg-slate-200 dark:bg-slate-600 overflow-hidden">
+            <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="text-[10px] tabular w-10 text-right">{pct.toFixed(0)}%</span>
+        </div>
+      </td>
+    )
+  }
+
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden">
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 flex-wrap">
         <h3 className="font-semibold text-sm">Ranking Size / Style — semua balance</h3>
-        <span className="text-xs text-slate-500">{sorted.length} baris</span>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-slate-500">{groups.length} grup · {filtered.length} baris</span>
+          <button type="button" onClick={expandAll} className="text-brand-600 hover:underline">Expand all</button>
+          <button type="button" onClick={collapseAll} className="text-slate-500 hover:underline">Collapse all</button>
+        </div>
       </div>
       <div className="max-h-96 overflow-auto">
         <table className="w-full text-xs">
@@ -92,32 +166,46 @@ export default function SizeRanking({ sizes, selectedFiles, selectedColors, sele
             </tr>
           </thead>
           <tbody>
-            {sorted.map((s, i) => {
-              const pct = s.order ? Math.min(100, (s.pack / s.order) * 100) : 0
+            {groups.map((g) => {
+              const isExp = expanded.has(g.key)
               return (
-                <tr key={i} className="border-t border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50">
-                  {COLS.map((c) => {
-                    const v = s[c.key]
-                    const isBal = c.key.startsWith('bal')
-                    const neg = isBal && typeof v === 'number' && v < 0
-                    return (
-                      <td key={c.key} className={`px-2 py-1.5 tabular whitespace-nowrap ${neg ? 'text-rose-600 font-medium' : ''}`}>
-                        {typeof v === 'number' ? fmt(v) : v}
-                      </td>
-                    )
-                  })}
-                  <td className="px-2 py-1.5 w-40">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-2 rounded-full bg-slate-200 dark:bg-slate-600 overflow-hidden">
-                        <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
-                      </div>
-                      <span className="text-[10px] tabular w-10 text-right">{pct.toFixed(0)}%</span>
-                    </div>
-                  </td>
-                </tr>
+                <Fragment key={g.key}>
+                  <tr
+                    onClick={() => toggleGroup(g.key)}
+                    className="border-t border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700/40 hover:bg-slate-100 dark:hover:bg-slate-700/60 cursor-pointer font-medium"
+                  >
+                    {COLS.map((c) => {
+                      if (c.key === 'file') {
+                        return (
+                          <td key={c.key} className="px-2 py-1.5 tabular whitespace-nowrap">
+                            <span className="inline-flex items-center gap-1">
+                              {isExp ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                              {g.subtotal.file}
+                            </span>
+                          </td>
+                        )
+                      }
+                      const v = g.subtotal[c.key]
+                      const isBal = c.key.startsWith('bal')
+                      const neg = isBal && typeof v === 'number' && v < 0
+                      return (
+                        <td key={c.key} className={`px-2 py-1.5 tabular whitespace-nowrap ${neg ? 'text-rose-600' : ''}`}>
+                          {typeof v === 'number' ? fmt(v) : v}
+                        </td>
+                      )
+                    })}
+                    {renderProgress(g.subtotal)}
+                  </tr>
+                  {isExp && g.rows.map((s, i) => (
+                    <tr key={`${g.key}-${i}`} className="border-t border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                      {renderCells(s, true)}
+                      {renderProgress(s)}
+                    </tr>
+                  ))}
+                </Fragment>
               )
             })}
-            {sorted.length === 0 && (
+            {groups.length === 0 && (
               <tr><td colSpan={COLS.length + 1} className="px-4 py-6 text-center text-slate-400">Tidak ada data untuk filter ini.</td></tr>
             )}
           </tbody>
