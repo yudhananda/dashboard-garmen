@@ -381,41 +381,69 @@ export async function parseWorkbook(buffer, fileName) {
     }
   }
 
-  // Per size (within file x color x style)
-  const sizes = []
+  // Per size (within file x color x style) — aggregate multiple PO records.
+  const sizeAggMap = new Map()
   for (const r of countedRecords) {
+    const key = `${r.file}||${r.color}||${r.style}||${r.size}`
+    if (!sizeAggMap.has(key)) {
+      sizeAggMap.set(key, {
+        file: r.file,
+        color: r.color,
+        style: r.style,
+        size: r.size,
+        order: 0,
+        cut: 0,
+        sewIn: 0,
+        qc1: 0,
+        qc2: 0,
+        metal: 0,
+        pack: 0,
+      })
+    }
+    const a = sizeAggMap.get(key)
+    a.order += r.order
+    a.cut += r.cut
+    a.sewIn += r.sewIn
+    a.qc1 += r.qc1
+    a.qc2 += r.qc2
+    a.metal += r.metal
+    a.pack += r.pack
+  }
+
+  const sizes = []
+  for (const a of sizeAggMap.values()) {
     const rejRecs = rej.records.filter(
-      (x) => x.file === r.file && x.style === r.style && x.color === r.color && x.size === r.size
+      (x) => x.file === a.file && x.style === a.style && x.color === a.color && x.size === a.size
     )
-    const reject = rejRecs.reduce((a, x) => a + x.reject, 0)
-    const cutAfterReject = r.cut - reject
+    const reject = rejRecs.reduce((s, x) => s + x.reject, 0)
+    const cutAfterReject = a.cut - reject
     const topPart = rejRecs
       .reduce((acc, x) => {
         const key = x.part || '(part kosong)'
         acc[key] = (acc[key] || 0) + x.reject
         return acc
       }, {})
-    const topPartEntry = Object.entries(topPart).sort((a, b) => b[1] - a[1])[0]
+    const topPartEntry = Object.entries(topPart).sort((x, y) => y[1] - x[1])[0]
     sizes.push({
-      file: r.file,
-      color: r.color,
-      style: r.style,
-      size: r.size,
-      order: r.order,
-      cut: r.cut,
+      file: a.file,
+      color: a.color,
+      style: a.style,
+      size: a.size,
+      order: a.order,
+      cut: a.cut,
       reject,
       cutAfterReject,
-      sewIn: r.sewIn,
-      qc1: r.qc1,
-      qc2: r.qc2,
-      metal: r.metal,
-      pack: r.pack,
-      selisihOrder: cutAfterReject - r.order,
-      balSewIn: r.sewIn - cutAfterReject,
-      balQc1: r.qc1 - r.sewIn,
-      balQc2: r.qc2 - r.qc1,
-      balMetal: r.metal - r.qc2,
-       balPack: r.pack - r.qc2,
+      sewIn: a.sewIn,
+      qc1: a.qc1,
+      qc2: a.qc2,
+      metal: a.metal,
+      pack: a.pack,
+      selisihOrder: cutAfterReject - a.order,
+      balSewIn: a.sewIn - cutAfterReject,
+      balQc1: a.qc1 - a.sewIn,
+      balQc2: a.qc2 - a.qc1,
+      balMetal: a.metal - a.qc2,
+      balPack: a.pack - a.qc2,
       rejectNa: rejRecs.length === 0,
       topPart: topPartEntry ? `${topPartEntry[0]} (${topPartEntry[1]})` : 'n/a',
     })
